@@ -1,0 +1,15 @@
+# 資料目錄（LevelDB 帳本副本、控制儲存、outbox、libp2p 網路身分、instance.lock、halt.json）。
+# ReadWriteOnce：同一時間只會掛在一個節點上，是單一實例的防線之一。容量依帳本成長調整
+# （簽署工具不做內容區塊 GC，見主 repo issue 001548）。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: open4wd-signer-data
+  labels:
+    app.kubernetes.io/name: open4wd-governance-signer
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

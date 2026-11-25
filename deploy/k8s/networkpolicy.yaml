@@ -1,0 +1,17 @@
+# 簽署工具預設只外連（bootstrap 節點、ledger topic 的對等節點），不監聽 libp2p、不當中繼，
+# 健康端點預設只綁 127.0.0.1。因此拒絕所有入站；出站不限目的地（對等節點位址不固定），
+# 需要更嚴格時在 overlay 把 egress 收窄到 bootstrap 節點的位址與 DNS。
+# 以 part-of 標籤選取：常駐 Deployment 的 pod 與 admin-job.yaml 的管理 Job pod 都受本政策涵蓋。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: open4wd-signer-egress-only
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: open4wd-governance-signer
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - {}
