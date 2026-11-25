@@ -1,0 +1,15 @@
+{
+  "name": "open-4wd-signer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open4WD 治理簽署工具的部署設定（映像由主 repo open-4wd 建置）",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs",
+    "render": "node scripts/render.mjs"
+  }
+}

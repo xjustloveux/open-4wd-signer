@@ -1,0 +1,84 @@
+# 管理指令的一次性 Job 範本（clear-halt、release-lock、config-export、config-update；也可執行 check）。
+#
+# 不在 kustomization.yaml 內，也不由 deploy workflow 套用。使用步驟見 README「管理指令」：
+#   1. kubectl -n open4wd-signer scale deployment/open4wd-governance-signer --replicas=0，並等 pod 結束
+#      （clear-halt、release-lock、config-export、config-update 與 run 共用資料目錄與 instance.lock，
+#      常駐實例未停時一律回退出碼 5）。check 不取實例鎖、不修改資料目錄，不需要先停常駐實例，可略過此步。
+#   2. 複製本檔到 checkout 外，填入 REPLACE_ 欄位與 args，kubectl create -f。
+#   3. kubectl -n open4wd-signer logs job/open4wd-signer-admin 讀取結果；需要確認字串的指令先以 --dry-run
+#      取得確認字串，再帶 --confirm 重跑（Job 不是 TTY）。
+#   4. 刪除 Job，再 scale 回 1。release-lock、config-update 之後必須重新啟動 run，改投的票或設定更新
+#      才會隨連線時的 heads 交換傳出。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: open4wd-signer-admin
+  namespace: open4wd-signer
+  labels:
+    app.kubernetes.io/name: open4wd-governance-signer-admin
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: open4wd-governance-signer-admin
+        # 與常駐 pod 同受 networkpolicy.yaml（拒絕入站）涵蓋。
+        app.kubernetes.io/part-of: open4wd-governance-signer
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: REPLACE_NODE_NAME
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: admin
+          image: REPLACE_IMAGE
+          # 例：['release-lock', '--dry-run']、['clear-halt', '--confirm', '<確認字串>']
+          args: ['check', '--storage-self-test']
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: OPEN4WD_PROFILE
+              value: REPLACE_PROFILE
+            - name: SIGNER_DATA_DIR
+              value: /data
+            - name: SIGNER_KEY_SOURCE
+              value: file
+            - name: SIGNER_KEY_FILE
+              value: /key/governance.key
+            - name: SIGNER_BOOTSTRAP
+              value: 'REPLACE_BOOTSTRAP'
+            # 管理指令不需要健康端點
+            - name: SIGNER_HEALTH_PORT
+              value: '0'
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: governance-key
+              mountPath: /key/governance.key
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: open4wd-signer-data
+        - name: governance-key
+          hostPath:
+            path: /etc/open4wd-signer/governance.key
+            type: File
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

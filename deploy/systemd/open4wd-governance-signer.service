@@ -1,0 +1,45 @@
+# 以 systemd 直接執行打包產物（不經容器）。安裝步驟見 deploy/systemd/README.md。
+[Unit]
+Description=Open4WD governance signer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=open4wd-signer
+Group=open4wd-signer
+EnvironmentFile=/etc/open4wd-signer/signer.env
+ExecStart=/usr/bin/node /opt/open4wd-signer/main.mjs run
+# SIGTERM 後依序停主迴圈、帳本、健康端點並歸零金鑰。
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=30
+# 2 用法、3 設定、5 前置條件不符（例如另一實例持有 instance.lock）重啟也不會好，不自動重啟。
+RestartPreventExitStatus=2 3 5
+StateDirectory=open4wd-signer
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadOnlyPaths=/opt/open4wd-signer /etc/open4wd-signer
+
+[Install]
+WantedBy=multi-user.target

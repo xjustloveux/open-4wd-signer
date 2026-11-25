@@ -1,0 +1,59 @@
+name: Deploy governance signer
+
+# 只手動觸發，且只在 repository 變數 SIGNER_DEPLOY_ENABLED 為 'true' 時執行；只接受預設分支。
+# 本流程永不接觸治理金鑰：金鑰由操作者離線放到節點的 hostPath，這裡只套用 manifest。
+# 唯一的 secret 是叢集連線用的 KUBE_CONFIG。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signer-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.SIGNER_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Require the default branch
+        env:
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: test "${REF}" = "refs/heads/${DEFAULT_BRANCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Verify manifest invariants
+        run: node --test 'scripts/*.test.mjs'
+
+      - name: Render manifests outside the checkout
+        env:
+          SIGNER_IMAGE: ${{ vars.SIGNER_IMAGE }}
+          SIGNER_NODE_NAME: ${{ vars.SIGNER_NODE_NAME }}
+          SIGNER_PROFILE: ${{ vars.SIGNER_PROFILE }}
+          SIGNER_BOOTSTRAP: ${{ vars.SIGNER_BOOTSTRAP }}
+        run: node scripts/render.mjs --out "$RUNNER_TEMP/open4wd-signer-k8s"
+
+      - name: Apply
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          : "${KUBE_CONFIG:?KUBE_CONFIG is required}"
+          umask 077
+          printf '%s' "$KUBE_CONFIG" > "$RUNNER_TEMP/kubeconfig"
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          kubectl apply -k "$RUNNER_TEMP/open4wd-signer-k8s"
+          kubectl -n open4wd-signer rollout status deployment/open4wd-governance-signer --timeout=300s
+          # 只顯示、不作為成敗依據：同步閘在正式 profile 需要對等節點與 120 秒靜默期
+          sleep 20
+          kubectl -n open4wd-signer exec deployment/open4wd-governance-signer -- node /app/main.mjs status || true
+
+      - name: Cleanup kubeconfig
+        if: always()
+        run: rm -f "$RUNNER_TEMP/kubeconfig"

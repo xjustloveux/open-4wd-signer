@@ -1,0 +1,111 @@
+# 常駐治理簽署工具（governance-signer run）。
+#
+# REPLACE_ 開頭的欄位由 scripts/render.mjs 在 checkout 外渲染（.github/workflows/deploy.yml），
+# 不要把真實節點名稱、bootstrap 位址或映像 digest 改進這個公開 repo。
+#
+# 單一實例：replicas 固定 1、Recreate（先停舊 pod 再起新 pod）、ReadWriteOnce 資料卷、
+# 金鑰只放在指定節點的 hostPath。工具本身另有 instance.lock 與 foreign-instance 偵測；
+# 同一把金鑰絕不能同時在兩處執行（會被判定為重複簽署而 halt）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open4wd-governance-signer
+  labels:
+    app.kubernetes.io/name: open4wd-governance-signer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: open4wd-governance-signer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: open4wd-governance-signer
+        # NetworkPolicy（拒絕入站）以此標籤選取，與管理 Job 共用。
+        app.kubernetes.io/part-of: open4wd-governance-signer
+    spec:
+      # 金鑰檔只存在這個節點；換節點必須先把金鑰（離線）移過去，並確認舊節點已停。
+      nodeSelector:
+        kubernetes.io/hostname: REPLACE_NODE_NAME
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # SIGTERM 後依序停主迴圈、帳本、健康端點並歸零金鑰。
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: signer
+          # 必須是 digest 形式（…@sha256:<64 hex>），由 render.mjs 檢查；不使用 latest 或可變標籤。
+          image: REPLACE_IMAGE
+          args: ['run']
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: OPEN4WD_PROFILE
+              value: REPLACE_PROFILE
+            - name: SIGNER_DATA_DIR
+              value: /data
+            - name: SIGNER_KEY_SOURCE
+              value: file
+            - name: SIGNER_KEY_FILE
+              value: /key/governance.key
+            - name: SIGNER_BOOTSTRAP
+              value: 'REPLACE_BOOTSTRAP'
+            # 健康端點只綁迴路位址；探針在容器內以 exec 存取，不經網路。
+            - name: SIGNER_HEALTH_HOST
+              value: 127.0.0.1
+            - name: SIGNER_HEALTH_PORT
+              value: '9475'
+            - name: SIGNER_LOG_LEVEL
+              value: info
+          # 不設 SIGNER_LISTEN：工具預設只外連、不監聽、不當中繼，因此沒有 containerPort 也沒有 Service。
+          livenessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "fetch('http://127.0.0.1:9475/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # 刻意不設 readinessProbe：沒有 Service 依賴就緒狀態，而 /readyz 在同步閘未過、非簽署者或 halted
+          # 時回 503，會讓 rollout 誤判失敗。就緒與 halt 以 governance-signer status 或 /status 監控。
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: governance-key
+              mountPath: /key/governance.key
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: open4wd-signer-data
+        # 節點上的金鑰檔須由操作者離線放置：擁有者 10001、權限 0400（群組或其他人可讀時工具拒絕啟動）。
+        - name: governance-key
+          hostPath:
+            path: /etc/open4wd-signer/governance.key
+            type: File
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

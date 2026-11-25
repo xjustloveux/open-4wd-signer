@@ -1,0 +1,12 @@
+# 簽署工具獨立命名空間。工具以節點專屬 hostPath 讀取治理金鑰（單一實例防線），Pod Security 的 baseline／restricted
+# 都不允許 hostPath，因此這裡不設 enforce（沿用叢集預設），只以 restricted 發出 warn 與 audit，
+# 讓 hostPath 以外的偏離（root、特權提升、能力）仍會被看見。叢集預設 enforce baseline／restricted 時，
+# 此 namespace 必須由叢集管理者明確放寬，否則 pod 會被拒（見 README「Pod Security」）。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: open4wd-signer
+  labels:
+    app.kubernetes.io/part-of: open4wd
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
